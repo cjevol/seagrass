@@ -648,21 +648,21 @@ plot(data_family_daf$GC3[data_family_daf$sex=='dioecy'], data_family_daf$pi0_pi4
 	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='dioecy']=='marine', '#0072B2', '#E69F00'),
 	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
 abline(m.dio, lwd=2, lty=2, col='red')
-ci.lines((data_family_daf$GC3[data_family_daf$sex=='dioecy']), m1.dio, col='blue',log='y',lty=2)
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='dioecy']), m.dio, col='blue',log='y',lty=2)
 
 
 plot(data_family_daf$GC3[data_family_daf$sex=='monoecy'], data_family_daf$pi0_pi4[data_family_daf$sex=='monoecy'],
 	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='monoecy']=='marine', '#0072B2', '#E69F00'),
 	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
 abline(m.mon, lwd=2, lty=2, col='red')
-ci.lines((data_family_daf$GC3[data_family_daf$sex=='monoecy']), m1.mon, col='blue',log='y',lty=2)
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='monoecy']), m.mon, col='blue',log='y',lty=2)
 
 
 plot(data_family_daf$GC3[data_family_daf$sex=='hermaphrodite'], data_family_daf$pi0_pi4[data_family_daf$sex=='hermaphrodite'],
 	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='hermaphrodite']=='marine', '#0072B2', '#E69F00'),
 	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
 abline(m.her, lwd=2, lty=2, col='red')
-ci.lines((data_family_daf$GC3[data_family_daf$sex=='hermaphrodite']), m1.her, col='blue',log='y',lty=2)
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='hermaphrodite']), m.her, col='blue',log='y',lty=2)
 
 
 
