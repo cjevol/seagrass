@@ -1,0 +1,714 @@
+---
+title: 'seagrass diversity data analyses : '
+author: "J Chen"
+date: 'Last update: `r Sys.Date()`'
+output:
+  html_document:
+    toc: yes
+    toc_depth: '2'
+    df_print: paged
+  word_document:
+    toc: yes
+    toc_depth: '2'
+  pdf_document:
+    toc: yes
+    toc_depth: '2'
+subtitle: Ornstein Uhlenbeck process to simulate gene number shared by two species
+editor_options:
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+library(rgl)
+
+knitr::opts_chunk$set(echo = TRUE)
+knitr::knit_hooks$set(webgl = hook_webgl)
+knitr::opts_chunk$set(fig.width=10, fig.height=12) 
+
+library(ggplot2)
+library(ggthemes)
+require(gridExtra)
+library(dplyr)
+library(magrittr)
+library(knitr)
+library(gplots)
+library(RColorBrewer)
+library(tidyverse)
+library(hrbrthemes)
+library(viridis)
+library(data.table)
+library(phytools)
+library(MCMCglmm)
+library(phyr)
+library(rr2) 
+library('readxl')
+
+```
+Define some functions
+```{r}
+# some functions
+# sort dataset with rownames matching tree tip labels, required for phylo analyses
+sort_data_by_treeTips=function(species, tree){
+	tip.lab=tree$tip.label
+	n=length(tip.lab)
+	index=numeric(n)
+	for(i in 1:n){
+		index[i] = which(species == tip.lab[i])
+	}
+	return(index)
+}
+
+ci.lines=function(x, model, log=F, ...){
+	x=x[!is.na(x)]
+	xm<-mean(x)
+	n<-length(x)
+	ssx<-sum(x^2)-sum(x)^2/n
+	s.t<-qt(0.975, (n-2))
+	xv.min=min(x)
+	xv.max=max(x)
+	if(xv.min<0){
+		xv.min=xv.min*1.2
+	}else{
+		xv.min=xv.min*0.6
+	}
+	if(xv.max<0){
+		xv.max=xv.max*0.6
+	}else{
+		xv.max=xv.max*1.2
+	}
+	xv<-seq(xv.min, xv.max, length=100)
+	yv<-coef(model)[1]+coef(model)[2]*xv
+	se<-sqrt(summary(model)[[6]]^2*(1/n+(xv-xm)^2/ssx))
+	ci<-s.t*se
+	uyv<-yv+ci
+	lyv<-yv-ci
+	if(log=='xy'){
+		lines(10^xv,10^uyv, ...)
+		lines(10^xv,10^lyv, ...)
+	}else if(log=='x'){
+		lines(10^xv,uyv, ...)
+		lines(10^xv,lyv, ...)
+		
+	}else if(log=='y'){
+		lines(xv,10^uyv, ...)
+		lines(xv,10^lyv, ...)
+		
+	}else{
+		lines(xv,uyv, ...)
+		lines(xv,lyv, ...)
+	}
+}
+
+
+plot_ci=function(xv, yv.lw, yv.hi, col =1 , ...){
+	n = length(xv)
+	for(i in 1:n){
+		arrows(xv[i],yv.lw[i], xv[i], yv.hi[i], angle=90, length = 0.06, code=3, col=col[i], ...)
+	}
+}
+
+
+
+```
+# Chapter 1. Life history traits vs genetic diversity
+
+We first examined the distribution of genetic diversity across LHT
+
+```{r}
+# process the data 
+data_family_daf=as.data.frame(read_excel('~/Desktop/ZJU/seagrass/1-manuscripts/202511/supplementaryTables.xlsx', sheet=4,skip=1))
+# classify into only two groups: 1) aerial & 2) hydrophilous
+data_family_daf$pollination2 = ifelse(data_family_daf$pollination=='Hydrophilous', 'Hydrophilous', 'Aerial')
+data_family_daf$distSites[data_family_daf$distSites<5]=NA
+data_family_daf$observations[is.na(data_family_daf$distSites)]=NA
+data_family_daf$census = data_family_daf$distSites/data_family_daf$leafSize
+row.names(data_family_daf)= data_family_daf$Species
+
+## remove Spirodela Polyrhiza as it is highly homozygous, very low diversity and possibly all cloned. 
+data_family_daf = data_family_daf[data_family_daf$Species!='SpirodelaPolyrhiza', ] # 
+tree<-read.tree('~/Desktop/ZJU/seagrass/1-manuscripts/202511/supplementaryFile1/27Sp_27Inds_2079OG_Partition.txt.treefile')
+tree<-drop.tip(tree, c('SpirodelaPolyrhiza')) 
+
+index = sort_data_by_treeTips(rownames(data_family_daf), tree)
+data_family_daf=data_family_daf[index,]
+```
+
+Plot genetic diversity (pi4) against LHT 
+```{r fig1, fig.with=20, fig.height=8}
+
+p<- ggplot(aes(x = habitat, y = pi4),data=data_family_daf) +
+   geom_violin() + 
+   geom_boxplot(width=0.1)+ stat_summary(fun = "median", geom = "crossbar",  
+   width = 0.5,colour = "red") +
+   geom_point(aes(fill = sex, color=sex), size = 5, shape = 21, 
+   position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+   scale_y_log10() +
+   theme(text = element_text(size = 18),axis.title.x = element_blank(), 
+         panel.grid.minor.x = element_blank(),
+         panel.grid.major.x = element_blank())+
+         ylab(expression(pi[4]))
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+   scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+p<- ggplot(aes(x = habitat, y = pi0_pi4),data=data_family_daf) +
+   geom_violin() + 
+   geom_boxplot(width=0.1)+ stat_summary(fun = "median", geom = "crossbar",  
+   width = 0.5,colour = "red") +
+   geom_point(aes(fill = sex, color=sex), size = 5, shape = 21, 
+   position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+   scale_y_log10() +
+   theme(text = element_text(size = 18),axis.title.x = element_blank(), 
+         panel.grid.minor.x = element_blank(),
+         panel.grid.major.x = element_blank())+
+         ylab(expression(pi[0]/pi[4]))
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+   scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+```
+It seems there is drastic difference between dioecious species living in marine and fresh water
+
+```{r}
+# test for significance
+tapply(data_family_daf$pi4, list(data_family_daf$habitat, data_family_daf$sex),median)
+
+m1=pglmm_compare(log10(pi4)~habitat*sex,phy=tree,data=data_family_daf,REML=F)
+
+pglmm_compare(log10(pi4)~habitat,phy=tree,data=data_family_daf[data_family_daf$sex=='dioecy',],REML=F)
+
+tapply(data_family_daf$pi0_pi4, list(data_family_daf$habitat, data_family_daf$sex),median)
+
+
+pglmm_compare(log10(pi0_pi4)~habitat,phy=tree,data=data_family_daf,REML=F)
+pglmm_compare(log10(pi0_pi4)~habitat,phy=tree,data=data_family_daf[data_family_daf$sex=='dioecy',],REML=F)
+pglmm_compare(log10(pi0_pi4)~habitat*sex,phy=tree,data=data_family_daf,REML=F)
+
+# phylog effect
+x= data_family_daf$pi4
+names(x)=rownames(data_family_daf)
+m1 = phylosig(tree, log10(x),test=T)
+print(m1)
+```
+
+# Chapter 2. DFE
+
+```{r fig9, fig.with=20, fig.height=8}
+p<- ggplot(aes(x = habitat, y = b),data=data_family_daf) +
+  geom_violin() +
+  geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+  geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+  theme(text = element_text(size = 18),
+       axis.title.x = element_blank(),
+        panel.grid.minor.x = element_blank(),
+        panel.grid.major.x = element_blank(),
+        ) +
+        ylab(expression(beta))     
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+p<-ggplot(aes(x = habitat, y =`alpha > 1`),data=data_family_daf) +
+		      geom_violin() +
+		      geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+		      geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+		      theme(text = element_text(size = 18),
+		           axis.title.x = element_blank(),
+		            panel.grid.minor.x = element_blank(),
+		            panel.grid.major.x = element_blank(),
+		            ) +
+		            ylab(expression(alpha[(Nes>1)])) 
+		   p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   	scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+ 		   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+
+```
+
+
+```{r}
+# strong deleterious mutations
+data_family_daf$str_del= data_family_daf$`<-100` + data_family_daf$`(-100,-10)` 
+
+# strong beneficial 
+data_family_daf$str_benf= data_family_daf$`(1, 10)` + data_family_daf$`10<`
+
+# strongly deleterious 
+p<-ggplot(aes(x = habitat, y =str_del),data=data_family_daf) +
+		      geom_violin() +
+		      geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+		      geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+		      theme(text = element_text(size = 18),
+		           axis.title.x = element_blank(),
+		            panel.grid.minor.x = element_blank(),
+		            panel.grid.major.x = element_blank(),
+					axis.title=element_text(size=24,face="bold")
+		            ) +
+		            ylab(expression('Nes < -10'))  
+		   p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   	scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+ 		   theme(legend.position=c(0.1, 0.05),legend.title = element_blank())
+
+# deleterious
+p<-ggplot(aes(x = habitat, y =`(-10, -1)`),data=data_family_daf) +
+		   		      geom_violin() +
+		   		      geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+		   		      geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+		   		      theme(text = element_text(size = 18),
+		   		           axis.title.x = element_blank(),
+		   		            panel.grid.minor.x = element_blank(),
+		   		            panel.grid.major.x = element_blank(),
+							axis.title=element_text(size=24,face="bold")
+		   		            ) +
+		   		            ylab(expression('Nes [-10,-1]'))  
+		   		   p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   		   	scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		    		   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+# neutral or nearly neutral 
+p<-ggplot(aes(x = habitat, y =`(-1,0)`),data=data_family_daf) +
+					 geom_violin() +
+					 geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+					 geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+					 theme(text = element_text(size = 18),
+					 axis.title.x = element_blank(),
+					 panel.grid.minor.x = element_blank(),
+					 panel.grid.major.x = element_blank(),
+					 axis.title=element_text(size=24,face="bold")
+					 ) +
+					 ylab(expression('Nes [-1,0]'))  
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+					  scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+					  theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+
+# slightly beneficial
+p<-ggplot(aes(x = habitat, y =`(0, 1)`),data=data_family_daf) +
+					 geom_violin() +
+					 geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+					 geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+					 theme(text = element_text(size = 18),
+					 axis.title.x = element_blank(),
+					 panel.grid.minor.x = element_blank(),
+					 panel.grid.major.x = element_blank(),
+					 axis.title=element_text(size=24,face="bold")
+					 ) +    scale_y_log10() +
+					 ylab(expression('Nes [0,1]'))  
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+					  scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+					  theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+
+
+# strongly beneficial					  
+p<-ggplot(aes(x = habitat, y =str_benf),data=data_family_daf) +
+		      geom_violin() +
+		      geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+		      geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+		      theme(text = element_text(size = 18),
+		           axis.title.x = element_blank(),
+		            panel.grid.minor.x = element_blank(),
+		            panel.grid.major.x = element_blank(),
+					axis.title=element_text(size=24,face="bold")
+		            ) + scale_y_log10() +
+		            ylab(expression('Nes > 1'))  
+		   p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		   	scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+ 		   theme(legend.position=c(0.1, 0.05),legend.title = element_blank())
+
+
+# Sb
+p<- ggplot(aes(x = habitat, y = S_b),data=data_family_daf) +
+   geom_violin() +
+   geom_boxplot(width=0.1)+  stat_summary(fun = "median", geom = "crossbar",  width = 0.5,colour = "red") +
+   geom_point(aes(fill = sex), size = 5, shape = 21, position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+   scale_y_log10() +
+   theme(text = element_text(size = 18),
+        axis.title.x = element_blank(),
+         panel.grid.minor.x = element_blank(),
+         panel.grid.major.x = element_blank(),
+         axis.title=element_text(size=24,face="bold")) +
+         ylab(expression(S[ben]))     
+p + scale_fill_manual(values=c('dioecy'= "#D55E00", 'hermaphrodite'= "#0072B2", 'monoecy'="#F0E442"))+
+		 		   scale_color_manual(values=c('dioecy'= "#D55E00", 'hermaphroditic'= "#0072B2", 'monoecy'="#F0E442"))+
+		 		   theme(legend.position=c(0.1, 0.05),legend.title = element_blank())
+				   
+
+
+
+# a whole picture of DFE 
+x=data_family_daf[,c(2:4,45:51)]
+x=x[order(x$habitat, x$sex),]
+x$'(1, 10)'=x$'(1, 10)' + x$'10<'
+ty= paste(x$habitat, x$sex, sep='_')
+names(x)[9] = '>1'
+names(x)[4] = '< -100'
+
+col.vector = c('#0072b2', '#e69f00', '#b8e186', '#de77ae','#d55e00','#f0e442')
+col_v = ifelse(ty=='marine_dioecy', col.vector[1], 
+		ifelse(ty=='marine_hermaphrodite', col.vector[2],
+		ifelse(ty=='marine_monoecy', col.vector[3],
+		ifelse(ty=='freshwater_dioecy', col.vector[4],
+		ifelse(ty=='freshwater_hermaphrodite', col.vector[5],col.vector[6])))))
+
+# barplot(as.matrix(x[,4:9]),beside=T, col=col_v, log='y')
+par(mar=c(5,5,3,2))
+barplot(as.matrix(x[,4:9]),beside=T, col=col_v, log='y',border=col_v, yaxt = 'n', ylim=c(1e-9,2))
+axis(2, at=c(1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1),lab=c(1e-9,1e-8,1e-7,1e-6,1e-5,1e-4,1e-3,1e-2,1e-1,1),las=1)
+legend('topright', legend=c('marine_dioecy', 'marine_hermaphrodite', 'marine_monoecy', 'freshwater_dioecy', 'freshwater_hermaphrodite', 'freshwater_monoecy'),fill= col.vector, border=col.vector)										  
+
+##
+tapply(data_family_daf$b, list(data_family_daf$habitat, data_family_daf$sex),median)
+pglmm_compare(`b` ~habitat,phy=tree,data=data_family_daf[data_family_daf$sex=='dioecy',],REML=F)
+
+```
+
+# Chapter 3. Effects of distribution range, Nc and historical Ne
+
+We further investigated the correlation of genetic diversity and census size
+
+
+Estimate historical Ne
+
+```{r}
+## read stairway plot2 results
+file_all_sites = list.files(path='~/Desktop/ZJU/seagrass/1-manuscripts/202511/supplementaryFile1/staiwayplot',pattern='final.summary$',full=T)
+
+n=length(file_all_sites)
+res.allSites = list()
+x.max=NULL
+y.min=NULL
+y.max=NULL
+for(i in 1:(n+1)){
+	res.allSites[i]=NULL
+}
+for(i in 1:n){
+	demo=read.table(file_all_sites[i], header=T)
+	id = strsplit(basename(file_all_sites[i]), '_')[[1]][1]
+	res.allSites[[i]]$id = id 
+	res.allSites[[i]]$habitat = data_family_daf$habitat[data_family_daf$Species==id]
+	res.allSites[[i]]$sex = data_family_daf$sex[data_family_daf$Species==id]
+	res.allSites[[i]]$Ne=demo$Ne_median
+	res.allSites[[i]]$year=demo$year
+	x.max=c(x.max, max(demo$year))
+	y.min=c(y.min, min(demo$Ne_median))
+	y.max=c(y.max, max(demo$Ne_median))	
+}
+
+year.max = max(x.max)
+Ne.min=min(y.min)
+Ne.max=max(y.max)
+
+```
+Plot stairway plot results 
+```{r fig6, fig.with=20, fig.height=8}
+par(mar=c(6,6,4,2))
+plot(c(10, year.max), c(Ne.min, Ne.max), type='n', ylab=expression(N[e]), xlab='Year', log='xy', las=1,cex.lab=1.5)
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='marine' & res.allSites[[i]]$sex=='dioecy'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#0072B2', lwd=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id, pos=3,off=.5, col='#0072B2')
+	}
+		
+}
+
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='freshwater'  & res.allSites[[i]]$sex=='dioecy'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#E69F00',lwd=2, lty=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id,  pos=3,off=.5, col='#E69F00')
+	}	
+}
+legend('bottomright', legend=c('marine dioecious', 'fresh water dioecious'), lty=c(1,2),lwd=2, col=c('#0072B2', '#E69F00'))
+
+```
+Historical Ne for marine and fresh water dioecious species. We observed significantly lower historical Ne for marine dioecious species,though they were also relatively stable. 
+
+
+```{r fig7, fig.with=20, fig.height=8}
+plot(c(10, year.max), c(Ne.min, Ne.max), type='n', ylab=expression(N[e]), xlab='Year', log='xy', las=1,cex.lab=1.5)
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='marine' & res.allSites[[i]]$sex=='monoecy'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#0072B2', lwd=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id, pos=3,off=.5, col='#0072B2')
+	}
+		
+}
+
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='freshwater'  & res.allSites[[i]]$sex=='monoecy'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#E69F00',lwd=2, lty=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id,  pos=3,off=.5, col='#E69F00')
+	}	
+}
+legend('bottomright', legend=c('marine monoecy', 'fresh water monoecy'), lty=c(1,2),lwd=2, col=c('#0072B2', '#E69F00'))
+
+## 
+plot(c(10, year.max), c(Ne.min, Ne.max), type='n', ylab=expression(N[e]), xlab='Year', log='xy', las=1,cex.lab=1.5)
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='marine' & res.allSites[[i]]$sex=='hermaphrodite'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#0072B2', lwd=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id, pos=3,off=.5, col='#0072B2')
+	}
+		
+}
+
+for(i in 1:n){
+	if(res.allSites[[i]]$habitat=='freshwater'  & res.allSites[[i]]$sex=='hermaphrodite'){
+		lines(res.allSites[[i]]$year, res.allSites[[i]]$Ne,col= '#E69F00',lwd=2, lty=2)
+		text(20, res.allSites[[i]]$Ne[res.allSites[[i]]$year>20][1], res.allSites[[i]]$id,  pos=3,off=.5, col='#E69F00')
+	}	
+}
+legend('bottomright', legend=c('marine hermaphrodite', 'fresh water hermaphrodite'), lty=c(1,2),lwd=2, col=c('#0072B2', '#E69F00'))
+
+```
+For monoecious and hermaphroditic species. Posidonia austrilis also had a lower Ne curve which corresponds to its small census size. We further estimated a harmonic mean of historical Ne, which should be positively correlated to pi4.
+
+```{r}
+###### calculate Ne
+ids = NULL
+Ne_harmonic = NULL
+for(i in 1:n){
+	index = res.allSites[[i]]$year > 1e2 & res.allSites[[i]]$year < 1e6
+	ids = c(ids, res.allSites[[i]]$id)
+	m = sum(index)
+	Ne = res.allSites[[i]]$Ne[index]
+	t =  res.allSites[[i]]$year[index]
+	Ne_v = Ne[1] # to restore different Ne
+	t_v = t[1]  
+	for(j in 2:m){
+		if(Ne[j] / tail(Ne_v,1) >= 2 | Ne[j] / tail(Ne_v,1) <= 0.5){
+			Ne_v = c(Ne_v, Ne[j])
+			t_v = c(t_v, t[j])
+		}
+	}
+	Ne_v = c(Ne_v, Ne[m])
+	t_v = c(t_v, t[m])
+	l = length(Ne_v)
+	Ne_harmonic_inverse_sum = 0
+	for(k in 1:(l-1)){
+		delta_t = t_v[k+1] - t_v[k]
+		Ne_harmonic_inverse_sum = Ne_harmonic_inverse_sum + delta_t / Ne_v[k]
+	}
+	t_total = t_v[l] - t_v[1]
+	Ne_harmonic = c(Ne_harmonic, t_total / Ne_harmonic_inverse_sum)
+# 	print(paste(id, round(Ne_harmonic)))
+}
+Ne = data.frame(ids, Ne_harmonic)
+
+
+data_family_daf$Ne_harmonic = NA
+for(i in 1:nrow(data_family_daf)){
+	id=rownames(data_family_daf)[i]
+	if(sum(Ne$ids==id)){
+		data_family_daf$Ne_harmonic[i] = Ne$Ne_harmonic[Ne$ids==id]
+	}
+}
+
+```
+
+```{r fig8, fig.with=10, fig.height=8}
+
+#
+pi4_lw = as.numeric(unlist(lapply(strsplit(data_family_daf$'pi4_95%',', '),function(a){a[1]})))
+pi4_hi = as.numeric(unlist(lapply(strsplit(data_family_daf$'pi4_95%',', '),function(a){a[2]}))) 
+
+pi0_pi4_lw = as.numeric(unlist(lapply(strsplit(data_family_daf$'pi0_pi4_95%',', '),function(a){a[1]})))
+pi0_pi4_hi = as.numeric(unlist(lapply(strsplit(data_family_daf$'pi0_pi4_95%',', '),function(a){a[2]}))) 
+
+
+par(mar=c(7,7,3,2), mgp=c(5,1,0),cex.lab=2.5,cex.axis=1.2, font=2, las=1)
+plot(data_family_daf$census, data_family_daf$pi4,log='xy', xlab=expression(paste('proxy of ', N[c])),ylab=expression(pi[4]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=1.5,ylim=c(min(pi4_lw),max(pi4_hi)))
+# legend('topleft',legend=c('monoecy', 'dioecy', 'hermaphrodite', 'marine', 'freshwater'),
+#     pch=c(17,19,15, 19, 19), col=c(1,1,1,'#0072B2','#E69F00'),cex=1.5)
+plot_ci(data_family_daf$census, pi4_lw, pi4_hi, col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),lty=1,lwd=1.5)
+# text(data_family_daf$census, data_family_daf$pi4, rownames(data_family_daf), pos=3, offset=.5, cex=.4)
+model<-lm(log10(data_family_daf$pi4)~log10(data_family_daf$census))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$census), model, log='xy',lwd=2,lty=2,col='blue')
+
+par(mar=c(7,7,3,2), mgp=c(5,1,0),cex.lab=2.5,cex.axis=1.2, font=2, las=1)
+plot(data_family_daf$census, data_family_daf$pi0_pi4,log='xy', xlab=expression(paste('proxy of ', N[c])),ylab=expression(pi[0]/pi[4]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=1.5, ylim=c(min(pi0_pi4_lw),max(pi0_pi4_hi)))
+plot_ci(data_family_daf$census, pi0_pi4_lw, pi0_pi4_hi, col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),lty=1,lwd=1.5)
+# text(data_family_daf$census, data_family_daf$pi0_pi4, rownames(data_family_daf), pos=3, offset=.5, cex=.4)
+model<-lm(log10(data_family_daf$pi0_pi4)~log10(data_family_daf$census))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$census), model, log='xy',lwd=2,lty=2,col='blue')
+summary(model)
+
+###
+par(mar=c(7,7,3,2), mgp=c(5,1,0),cex.lab=2.5,cex.axis=1.2, font=2, las=1)
+plot(data_family_daf$Ne_harmonic, data_family_daf$pi4,log='xy', xlab=expression(N[e]),ylab=expression(pi[4]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=1.5, ylim=c(min(pi4_lw),max(pi4_hi)))
+# text(data_family_daf$Ne_harmonic, data_family_daf$pi4, rownames(data_family_daf), pos=3, offset=.5, cex=.4)
+plot_ci(data_family_daf$Ne_harmonic, pi4_lw, pi4_hi, col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),lty=1,lwd=1.5)
+model<-lm(log10(data_family_daf$pi4)~log10(data_family_daf$Ne_harmonic))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$Ne_harmonic), model, log='xy',lwd=2,lty=2,col='blue')
+
+# summary(model)
+par(mar=c(7,7,3,2), mgp=c(5,1,0),cex.lab=2.5,cex.axis=1.2, font=2, las=1)
+plot(data_family_daf$Ne_harmonic, data_family_daf$pi0_pi4,log='xy', xlab=expression(N[e]),ylab=expression(pi[0]/pi[4]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=1.5, ylim=c(min(pi0_pi4_lw),max(pi0_pi4_hi)))
+plot_ci(data_family_daf$Ne_harmonic, pi0_pi4_lw, pi0_pi4_hi, col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),lty=1,lwd=1.5)
+# text(data_family_daf$Ne_harmonic, data_family_daf$pi0_pi4, rownames(data_family_daf), pos=3, offset=.5, cex=.4)
+model<-lm(log10(data_family_daf$pi0_pi4)~log10(data_family_daf$Ne_harmonic))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$Ne_harmonic), model, log='xy',lwd=2,lty=2,col='blue')
+
+
+m1=pglmm_compare(log10(pi4)~ log10(distSites),phy=tree,data=data_family_daf,REML=F)
+m2=pglmm_compare(log10(pi4)~ log10(census),phy=tree,data=data_family_daf,REML=F)
+m3=pglmm_compare(log10(pi4)~ log10(Ne_harmonic),phy=tree,data=data_family_daf,REML=F)
+R2(m1)
+R2(m2)
+R2(m3)
+
+m1=pglmm_compare(log10(pi0_pi4)~ log10(distSites),phy=tree,data=data_family_daf,REML=F)
+m2=pglmm_compare(log10(pi0_pi4)~ log10(census),phy=tree,data=data_family_daf,REML=F)
+m3=pglmm_compare(log10(pi0_pi4)~ log10(Ne_harmonic),phy=tree,data=data_family_daf,REML=F)
+R2(m1)
+R2(m2)
+R2(m3)
+
+```
+
+```{r}
+###### check GC content, genome size and other factors 
+p<- ggplot(aes(x = sex, y = GC3),data=data_family_daf) +
+   geom_violin() + 
+   geom_boxplot(width=0.1)+ stat_summary(fun = "median", geom = "crossbar",  
+   width = 0.5,colour = "red") +
+   geom_point(aes(fill = habitat, color=habitat), size = 5, shape = 21, 
+   position = position_jitterdodge(dodge.width=0.1, jitter.width=0.1)) +
+   theme(text = element_text(size = 18),axis.title.x = element_blank(), 
+         panel.grid.minor.x = element_blank(),
+         panel.grid.major.x = element_blank())+
+         ylab('GC3')
+p + scale_fill_manual(values=c('marine'= '#0072B2', 'freshwater' = '#E69F00'))+
+   scale_color_manual(values=c('marine'= '#0072B2', 'freshwater' = '#E69F00'))+
+   theme(legend.position=c(0.1, 0.95),legend.title = element_blank())
+
+# hermaphrodite has significant lower GC3 but not after correcting for phylogeny
+tapply(data_family_daf$GC3, list(data_family_daf$habitat, data_family_daf$sex),median)
+pglmm_compare(GC3~ sex,phy=tree,data=data_family_daf,REML=F) 
+## no different in GC3 between marine and freshwater
+tapply(data_family_daf$GC3, list(data_family_daf$habitat),median)
+pglmm_compare(GC3~ habitat,phy=tree,data=data_family_daf,REML=F) 
+
+# GC or GC3 has no effects on diversity alone but interact with sex
+# pglmm_compare(log10(pi4)~ GC,phy=tree,data=data_family_daf,REML=F)
+# pglmm_compare(log10(pi4)~ GC3,phy=tree,data=data_family_daf,REML=F)
+pglmm_compare(log10(pi4) ~ GC3*sex,phy=tree,data=data_family_daf,REML=F)
+
+### G3 improves the explanation of diversity
+m.dio = lm(log10(data_family_daf$pi4[data_family_daf$sex=='dioecy'])~data_family_daf$GC3[data_family_daf$sex=='dioecy'])
+m.mon = lm(log10(data_family_daf$pi4[data_family_daf$sex=='monoecy'])~data_family_daf$GC3[data_family_daf$sex=='monoecy'])
+m.her = lm(log10(data_family_daf$pi4[data_family_daf$sex=='hermaphrodite'])~data_family_daf$GC3[data_family_daf$sex=='hermaphrodite'])
+
+par(mar=c(6,5,3,2), mfrow=c(2,3))
+plot(data_family_daf$GC3[data_family_daf$sex=='dioecy'], data_family_daf$pi4[data_family_daf$sex=='dioecy'], 
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='dioecy']=='marine', '#0072B2', '#E69F00'), 
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[4]),cex.lab=2,las=1)
+abline(m.dio, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='dioecy']), m.dio, col='blue',log='y',lty=2)
+legend('topleft',  legend=c('marine', 'freshwater'), pch=16, col=c('#0072B2', '#E69F00'), cex=2)
+# text(0.42,0.02, 'Dioecious', cex=2)
+
+
+plot(data_family_daf$GC3[data_family_daf$sex=='monoecy'], data_family_daf$pi4[data_family_daf$sex=='monoecy'], 
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='monoecy']=='marine', '#0072B2', '#E69F00'), 
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[4]),cex.lab=2,las=1)
+abline(m.mon, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='monoecy']), m.mon, col='blue',log='y',lty=2)
+# legend('bottomright', title='Monoecious', legend=c('marine', 'freshwater'), pch=16, col=c('#0072B2', '#E69F00'), cex=2)
+# text(0.396,0.0038, 'Monoecious', cex=2)
+
+
+plot(data_family_daf$GC3[data_family_daf$sex=='hermaphrodite'], data_family_daf$pi4[data_family_daf$sex=='hermaphrodite'], 
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='hermaphrodite']=='marine', '#0072B2', '#E69F00'), 
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[4]),cex.lab=2,las=1)
+abline(m.her, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='hermaphrodite']), m.her, col='blue',log='y',lty=2)
+# legend('bottomright', title='Hermaphroditic', legend=c('marine', 'freshwater'), pch=16, col=c('#0072B2', '#E69F00'), cex=2)
+
+
+## pi0/pi4
+pglmm_compare(log10(pi0_pi4) ~ GC3*sex,phy=tree,data=data_family_daf,REML=F)
+m.dio = lm(log10(data_family_daf$pi0_pi4[data_family_daf$sex=='dioecy'])~data_family_daf$GC3[data_family_daf$sex=='dioecy'])
+m.mon = lm(log10(data_family_daf$pi0_pi4[data_family_daf$sex=='monoecy'])~data_family_daf$GC3[data_family_daf$sex=='monoecy'])
+m.her = lm(log10(data_family_daf$pi0_pi4[data_family_daf$sex=='hermaphrodite'])~data_family_daf$GC3[data_family_daf$sex=='hermaphrodite'])
+
+
+plot(data_family_daf$GC3[data_family_daf$sex=='dioecy'], data_family_daf$pi0_pi4[data_family_daf$sex=='dioecy'],
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='dioecy']=='marine', '#0072B2', '#E69F00'),
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
+abline(m.dio, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='dioecy']), m1.dio, col='blue',log='y',lty=2)
+
+
+plot(data_family_daf$GC3[data_family_daf$sex=='monoecy'], data_family_daf$pi0_pi4[data_family_daf$sex=='monoecy'],
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='monoecy']=='marine', '#0072B2', '#E69F00'),
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
+abline(m.mon, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='monoecy']), m1.mon, col='blue',log='y',lty=2)
+
+
+plot(data_family_daf$GC3[data_family_daf$sex=='hermaphrodite'], data_family_daf$pi0_pi4[data_family_daf$sex=='hermaphrodite'],
+	col=ifelse(data_family_daf$habitat[data_family_daf$sex=='hermaphrodite']=='marine', '#0072B2', '#E69F00'),
+	log='y', cex=2, pch=16,xlab='GC3', ylab=expression(pi[0]/pi[4]),cex.lab=2,las=1)
+abline(m.her, lwd=2, lty=2, col='red')
+ci.lines((data_family_daf$GC3[data_family_daf$sex=='hermaphrodite']), m1.her, col='blue',log='y',lty=2)
+
+
+
+model=pglmm_compare(log10(pi4) ~ GC3*sex+habitat,phy=tree,data=data_family_daf,REML=F)
+R2(model)
+
+ model2=pglmm_compare(log10(pi0_pi4) ~ GC3*sex+habitat,phy=tree,data=data_family_daf,REML=F)
+ R2(model2)
+
+
+## GC or GC3 has a negative effect on Tajima's D 
+
+# strong effect of TD on pi0/pi4, especially TD0
+pglmm_compare((pi0_pi4)~ TD4,phy=tree,data=data_family_daf,REML=F)
+pglmm_compare((pi0_pi4)~ TD0,phy=tree,data=data_family_daf,REML=F)
+
+## correlated with alpha or strongly positive selected mutations but not with p_b or S_b, neither with deleterious 
+pglmm_compare(str_del ~ GC3*sex+habitat,phy=tree,data=data_family_daf,REML=F)
+
+
+### selfing rate
+tapply(data_family_daf$selfingRate, list(data_family_daf$habitat),median)
+
+pglmm_compare(`S_b` ~ selfingRate,phy=tree,data=data_family_daf,REML=F)
+```
+
+```{r}
+## Ka/Ks
+data_family_daf$`Ka/Ks` = as.numeric(data_family_daf$`Ka/Ks`)
+par(mar=c(7,7,3,2), mgp=c(5,1,0),cex.lab=2,cex.axis=1.2, font=4, las=1)
+
+plot(data_family_daf$census, data_family_daf$`Ka/Ks`,log='xy', xlab=expression(paste('proxy of ', N[c])),ylab=expression(K[a]/K[s]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=3, xlim=c(0.01,25))
+text(data_family_daf$census, data_family_daf$'Ka/Ks', rownames(data_family_daf), pos=3, offset=1, cex=.6)
+model<-lm(log10(data_family_daf$`Ka/Ks`)~log10(data_family_daf$census))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$census), model, log='xy',lwd=2,lty=2,col='blue')
+
+plot(data_family_daf$Ne_harmonic, data_family_daf$`Ka/Ks`,log='xy', xlab=expression(N[e]),ylab=expression(K[a]/K[s]),
+pch=ifelse(data_family_daf$sex=='dioecy',19, ifelse(data_family_daf$sex=='monoecy', 17, 15)), 
+col=ifelse(data_family_daf$habitat=='marine', '#0072B2', '#E69F00'),cex=3, xlim=c(1e3,1e5))
+text(data_family_daf$Ne_harmonic, data_family_daf$'Ka/Ks', rownames(data_family_daf), pos=3, offset=1, cex=.6)
+model<-lm(log10(data_family_daf$`Ka/Ks`)~log10(data_family_daf$Ne_harmonic))
+abline(model, lwd=3, lty=2, col='red')
+ci.lines(log10(data_family_daf$Ne_harmonic), model, log='xy',lwd=2,lty=2,col='blue')
+
+```
+
