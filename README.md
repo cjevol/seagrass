@@ -9,6 +9,6 @@ The Rmd file can be knit by Rstudio. Precompiled PDF and html files are also pro
 
 3. ViolinPlot_Model1_kaks.R: R script used to plot violin plot for kaks distributions. 
 
-4. VolcanoPlot_TPM_DEG.R  R script used to plot the volcano plot for gene expression differentiation.
+4. VolcanoPlot_TPM_DEG.R:  R script used to plot the volcano plot for gene expression differentiation.
 
-5. 
+5. seagrassDataAnalyses.Rmd: R markdown file used to do analyses of population genetics and phylogenetic regression 
